@@ -2,7 +2,7 @@
 
 Spatial Multi-Omics PCA (SMOPCA) is a novel dimension reduction method to integrate multi-modal data and extract low-dimensional representations with preserved spatial dependencies among spots.
 
-![](https://github.com/cmhimself/SMOPCA/blob/main/img/fig1.jpg?raw=true)
+![fig1](./img/fig1.png)
 
 ## Installation
 

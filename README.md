@@ -29,4 +29,4 @@ pip install SMOPCA
 
 ## Datasets
 
-Sample datasets are provided in ./data folder. The rest of the datasets used in this study are available at https://drive.google.com/drive/folders/11RfeF_yrdSGRtXZnzPlfxojM5V4ezMVr?usp=drive_link
+Sample datasets are provided in ./data folder. The rest of the datasets used in this study are available at https://doi.org/10.5281/zenodo.15123905

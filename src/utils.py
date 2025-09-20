@@ -3,8 +3,34 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scanpy as sc
 from sklearn import metrics
-from matplotlib.patches import Ellipse
+# from matplotlib.patches import Ellipse  # Unused import
 from scipy import sparse
+
+
+def clr_normalize_each_cell(adata):
+    """
+    Centered log-ratio (CLR) normalization for each cell.
+    This is commonly used for protein/ADT data normalization.
+    """
+    # Convert to dense if sparse
+    if sparse.issparse(adata.X):
+        X = adata.X.toarray()
+    else:
+        X = adata.X
+    
+    # Add pseudocount to avoid log(0)
+    X = X + 1
+
+    # Calculate geometric mean for each cell
+    geometric_mean = np.exp(np.mean(np.log(X), axis=1, keepdims=True))
+
+    # CLR normalization: log(x / geometric_mean)
+    X_clr = np.log(X / geometric_mean)
+
+    # Update the AnnData object
+    adata.X = X_clr
+
+    return adata
 
 
 def preprocess_adata(adata_list, filter_gene=25, filter_cell=50, hvg=2000):

@@ -92,7 +92,7 @@ class SMOPCA:
             self.K = np.identity(self.n)
         else:
             logger.error("other kernel type not implemented yet!")
-            raise NotImplemented
+            raise NotImplementedError
         logger.debug("performing eigenvalue decomposition on kernel matrix!")
         self.lbds, self.U = eigh(self.K)
 
@@ -103,7 +103,7 @@ class SMOPCA:
             if recon_det < -1 or recon_det > 1000:
                 logger.warning("kernel matrix status: det={:.4f}, K_num={:.4f}, det(KK^-1)={:.4f}\n"
                                "numerical instability is expected, please try smaller gamma or length_scale".format(
-                    K_det, K_num, recon_det))
+                                   K_det, K_num, recon_det))
             else:
                 logger.debug("kernel matrix status: det={:.4f}, K_num={:.4f}, det(KK^-1)={:.4f}".format(
                     np.linalg.det(self.K), np.sum(self.K - np.identity(self.n)), np.linalg.det(self.K @ self.K_inv)
@@ -226,12 +226,12 @@ class SMOPCA:
             self.buildKernel(length_scale=gamma_hat)
             if abs(gamma - gamma_hat) < tol_gamma:
                 self.gamma_hat = gamma_hat
-                logger.info(f"reach tolerance threshold, gamma done!")
+                logger.info("reach tolerance threshold, gamma done!")
                 break
             gamma = gamma_hat
             if iter1 == iterations_gamma - 1:
                 self.gamma_hat = gamma_hat
-                logger.warning(f"reach end of iteration for gamma!")
+                logger.warning("reach end of iteration for gamma!")
                 break
 
         logger.info("estimation complete!")

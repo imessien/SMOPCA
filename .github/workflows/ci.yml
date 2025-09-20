@@ -16,6 +16,7 @@ jobs:
       matrix:
         python-version: [3.9, 3.10, 3.11, 3.12]
         scipy-version: ['1.10.0', '1.13.0', '1.16.0']
+      fail-fast: false
 
     steps:
     - uses: actions/checkout@v4
@@ -103,7 +104,7 @@ jobs:
     
     - name: Run flake8
       run: |
-        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 src/ --count --select=E9,F63,F7,F82,F401,F901 --show-source --statistics --max-line-length=120
     
     - name: Check code formatting with black
       run: |

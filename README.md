@@ -7,9 +7,27 @@ Spatial Multi-Omics PCA (SMOPCA) is a novel dimension reduction method to integr
 ## Installation
 
 SMOPCA can be installed directly from PyPI using the following command:
-```
+```bash
 pip install SMOPCA
 ```
+
+Or install from source:
+```bash
+git clone https://github.com/cmhimself/SMOPCA.git
+cd SMOPCA
+pip install -e .
+```
+
+### Requirements
+
+- Python >= 3.9
+- SciPy >= 1.10.0 (compatible with latest versions up to 1.16+)
+- NumPy >= 1.23.0
+- scikit-learn >= 1.2.0
+- scanpy >= 1.9.0
+- pandas >= 1.5.0
+- matplotlib >= 3.6.0
+- anndata >= 0.8.0
 
 ## Run SMOPCA
 
@@ -27,6 +45,29 @@ pip install SMOPCA
    - GSEA
    - Other tasks
 
+## Testing
+
+To test SMOPCA installation and compatibility with your SciPy version:
+
+```bash
+python test_smopca.py
+```
+
+This will run comprehensive tests including:
+- Basic functionality tests
+- Different kernel type tests
+- Edge case handling
+- SciPy version compatibility
+
 ## Datasets
 
 Sample datasets are provided in ./data folder. The rest of the datasets used in this study are available at https://doi.org/10.5281/zenodo.15187362
+
+## Changelog
+
+### v0.1.2 (Latest)
+- **SciPy Compatibility**: Updated to work with SciPy versions 1.10.0 through 1.16+
+- **Improved Error Handling**: Enhanced robustness for root finding algorithms
+- **Flexible Dependencies**: Updated version constraints for better compatibility
+- **CI/CD Pipeline**: Added GitHub Actions for automated testing
+- **Python Support**: Extended support to Python 3.9-3.12

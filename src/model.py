@@ -163,27 +163,27 @@ class SMOPCA:
 
                     # estimate a bound for tighter searching range
                     if bound_list[modality] is None:
-                        lb = ub = 0.1
-                        lb_res = -np.inf
-                        ub_res = np.inf
-                        for sigma in np.arange(0.1, 10.0, 0.1):
+                        # Robustly find a valid bracket [lb, ub] for brentq root finding
+                        lb, ub = None, None
+                        prev_res = None
+                        sigma_range = np.arange(0.01, 10.0, 0.01)
+                        for sigma in sigma_range:
                             res = jac_sigma_sqr(sigma)
-                            if res < 0:
-                                lb = sigma
-                                lb_res = res
-                            else:
+                            if prev_res is not None and np.sign(res) != np.sign(prev_res):
+                                lb = sigma_range[np.where(sigma_range == sigma)[0][0] - 1]
                                 ub = sigma
-                                ub_res = res
                                 break
-                        if abs(lb_res) < 1000:  # for a safer bound since this is a bound dependent on last iteration (init values)
-                            lb -= 0.05
-                        if abs(ub_res) < 1000:
-                            ub += 0.05
+                            prev_res = res
+                        if lb is None or ub is None:
+                            logger.error(f"Could not find valid bracket for sigma{modality + 1} root finding. Try adjusting the search range.")
+                            raise RuntimeError(f"Failed to bracket root for sigma{modality + 1}")
+                        # Add a small margin to the bracket
+                        lb = max(0.001, lb - 0.01)
+                        ub = min(10.0, ub + 0.01)
                         bound_list[modality] = (lb, ub)
                         logger.info("sigma{} using bound: ({:.5f}, {:.5f})".format(modality + 1, lb, ub))
-
-                    sigma_hat_sqr = brentq(jac_sigma_sqr, bound_list[modality][0], bound_list[modality][1],
-                                           xtol=sigma_xtol_list[modality])
+                        sigma_hat_sqr = brentq(jac_sigma_sqr, bound_list[modality][0], bound_list[modality][1],
+                                               xtol=sigma_xtol_list[modality])
                     logger.info("iter {} sigma{} brentq done, sigma{}sqr = {:.5f}, sigma{}hatsqr = {:.5f}".format(
                         iter2, modality + 1, modality + 1, sigma_sqr, modality + 1, sigma_hat_sqr))
 

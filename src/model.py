@@ -221,13 +221,13 @@ class SMOPCA:
                     ub_val = jac_sigma_sqr(bound_list[modality][1])
                     
                     while lb_val * ub_val >= 0:  # Keep searching until different signs found
-                        logger.warning(f"sigma{modality + 1}: Still same signs, continuing search")
                         if lb_val < 0:  # Both negative, expand upper bound
                             bound_list[modality] = (bound_list[modality][0], bound_list[modality][1] * 10)
                         else:  # Both positive, expand lower bound
                             bound_list[modality] = (bound_list[modality][0] * 0.1, bound_list[modality][1])
                         lb_val = jac_sigma_sqr(bound_list[modality][0])
                         ub_val = jac_sigma_sqr(bound_list[modality][1])
+                        logger.warning(f"sigma{modality + 1}: Still same signs, continuing search")
                     
                     sigma_hat_sqr = brentq(jac_sigma_sqr, bound_list[modality][0], bound_list[modality][1],
                                            xtol=sigma_xtol_list[modality])

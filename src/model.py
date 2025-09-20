@@ -1,4 +1,5 @@
 import numpy as np
+import cupy as cp
 import scipy
 import logging
 from sklearn.metrics.pairwise import rbf_kernel
@@ -7,11 +8,23 @@ from scipy.linalg import eigh
 from scipy.optimize import brentq
 from scipy.spatial import distance_matrix
 
+# Import CuPy SciPy modules for GPU acceleration
+try:
+    import cupyx.scipy.linalg as cp_linalg
+    import cupyx.scipy.spatial as cp_spatial
+    import cupyx.scipy.optimize as cp_optimize
+    CUPY_AVAILABLE = True
+except ImportError:
+    CUPY_AVAILABLE = False
+    cp_linalg = None
+    cp_spatial = None
+    cp_optimize = None
+
 logger = logging.getLogger(__name__)
 
 
 class SMOPCA:
-    def __init__(self, Y_list, pos, Z_dim=20, omics_weight=False, alpha_list=None, intercept=True, kernel_type='matern', nu=1.5):
+    def __init__(self, Y_list, pos, Z_dim=20, omics_weight=False, alpha_list=None, intercept=True, kernel_type='matern', nu=1.5, use_gpu=True):
         """
         :param Y_list: data matrices from different modalities with shape (#feats, #cells)
         :param pos: spatial coordinates with shape (#cells, 2)
@@ -21,37 +34,58 @@ class SMOPCA:
         :param intercept: whether to use intercept for data with mean structures
         :param kernel_type: type of kernel, default is matern
         :param nu: matern kernel parameter, common value is 0.5, 1.5 or 2.5
+        :param use_gpu: whether to use GPU acceleration with CuPy (default: True)
         """
         assert all(Y.shape[1] == Y_list[0].shape[1] for Y in Y_list)
-        self.Y_list = Y_list
-        self.m_list = [Y.shape[0] for Y in Y_list]
-        self.n = Y_list[0].shape[1]
+        
+        # GPU detection and array backend selection
+        self.use_gpu = use_gpu and CUPY_AVAILABLE and cp.cuda.is_available()
+        self.xp = cp if self.use_gpu else np  # Use CuPy or NumPy based on availability
+        
+        # Convert input data to appropriate arrays
+        if self.use_gpu:
+            self.Y_list = [cp.asarray(Y, dtype=cp.float32) for Y in Y_list]
+            self.pos = cp.asarray(pos, dtype=cp.float32)
+        else:
+            self.Y_list = Y_list
+            self.pos = pos
+        
+        self.m_list = [Y.shape[0] for Y in self.Y_list]
+        self.n = self.Y_list[0].shape[1]
         self.d = Z_dim
-        self.modality_num = len(Y_list)
+        self.modality_num = len(self.Y_list)
 
         # kernel part
-        self.pos = pos
         self.nu = nu
         self.kernel_type = kernel_type
 
         # intercept and covariate part, simplified for easier inference
         self.intercept = intercept
         if self.intercept:
-            self.q_list = [1 for _ in range(len(Y_list))]
-            self.X_list = [np.ones((self.n, 1)) for _ in range(len(Y_list))]
-            self.M_list = [np.identity(self.n) - X @ np.linalg.inv((X.T @ X)) @ X.T for X in self.X_list]
+            self.q_list = [1 for _ in range(len(self.Y_list))]
+            if self.use_gpu:
+                self.X_list = [cp.ones((self.n, 1)) for _ in range(len(self.Y_list))]
+                self.M_list = [cp.eye(self.n) - X @ cp.linalg.inv((X.T @ X)) @ X.T for X in self.X_list]
+            else:
+                self.X_list = [np.ones((self.n, 1)) for _ in range(len(self.Y_list))]
+                self.M_list = [np.eye(self.n) - X @ np.linalg.inv((X.T @ X)) @ X.T for X in self.X_list]
         else:
-            self.q_list = [0 for _ in range(len(Y_list))]
-            self.M_list = [np.identity(self.n) for _ in range(len(Y_list))]
+            self.q_list = [0 for _ in range(len(self.Y_list))]
+            if self.use_gpu:
+                self.M_list = [cp.eye(self.n) for _ in range(len(self.Y_list))]
+            else:
+                self.M_list = [np.eye(self.n) for _ in range(len(self.Y_list))]
 
         # omics weight part
         if alpha_list is None:
             if not omics_weight:
-                self.alpha_list = np.array([1 for _ in range(len(Y_list))])
+                alpha_array = self.xp.array([1 for _ in range(len(self.Y_list))])
             else:
-                self.alpha_list = np.max(self.m_list) / np.array(self.m_list)
+                alpha_array = self.xp.array(np.max(self.m_list) / np.array(self.m_list))
         else:
-            self.alpha_list = alpha_list
+            alpha_array = self.xp.array(alpha_list)
+            
+        self.alpha_list = alpha_array.astype(self.xp.float32)
 
         self.K = None
         self.K_inv = None
@@ -61,8 +95,8 @@ class SMOPCA:
         self.gamma_hat = None
         self.W_hat_list = []
         self.sigma_hat_sqr_list = []
-        self.Z = None
         logger.info(f"SMOPCA object created, with {self.n} cells and {[Y.shape[0] for Y in self.Y_list]} features and {self.kernel_type} kernel")
+        logger.info(f"Using {'GPU (CuPy)' if self.use_gpu else 'CPU (NumPy)'} acceleration: {self.use_gpu}")
 
     def buildKernel(self, method="sklearn", length_scale=1.0, check_numeric_stability=False):
         """
@@ -73,41 +107,62 @@ class SMOPCA:
         if self.kernel_type == "gaussian":
             logger.info(f"calculating {self.kernel_type} kernel with {method} implementation, gamma = {length_scale}")
             if method == "sklearn":
-                self.K = rbf_kernel(self.pos, self.pos, gamma=1 / length_scale)
+                # Convert to CPU for sklearn, then back to GPU
+                pos_cpu = self.pos.get() if self.use_gpu else self.pos
+                K_cpu = rbf_kernel(pos_cpu, pos_cpu, gamma=1 / length_scale)
+                self.K = cp.asarray(K_cpu, dtype=cp.float32) if self.use_gpu else K_cpu
             elif method == "scipy":
-                self.K = np.exp(-np.power(distance_matrix(self.pos, self.pos), 2) / length_scale)
+                # Use CuPy/NumPy for distance calculation
+                pos_diff = self.pos[:, None, :] - self.pos[None, :, :]  # Broadcasting
+                squared_dist = self.xp.sum(pos_diff ** 2, axis=2)
+                self.K = self.xp.exp(-squared_dist / length_scale)
         elif self.kernel_type == 'matern':
             logger.info(f"calculating {self.kernel_type} kernel, nu = {self.nu}, length_scale = {length_scale}")
+            # Convert to CPU for sklearn, then back to GPU
             matern_obj = Matern(length_scale=length_scale, nu=self.nu)
-            self.K = matern_obj(X=self.pos, Y=self.pos)
+            pos_cpu = self.pos.get() if self.use_gpu else self.pos
+            K_cpu = matern_obj(X=pos_cpu, Y=pos_cpu)
+            self.K = cp.asarray(K_cpu, dtype=cp.float32) if self.use_gpu else K_cpu
         elif self.kernel_type == 'cauchy':
             logger.info(f"calculating {self.kernel_type} kernel, sigma = {length_scale}")
-            squared_diff = distance_matrix(self.pos, self.pos) ** 2
+            # Use CuPy/NumPy for distance calculation
+            pos_diff = self.pos[:, None, :] - self.pos[None, :, :]
+            squared_diff = self.xp.sum(pos_diff ** 2, axis=2)
             self.K = 1 / (1 + squared_diff / length_scale ** 2)
         elif self.kernel_type == "tsne":
-            self.pos *= length_scale
-            self.K = np.power(np.power(distance_matrix(self.pos, self.pos), 2) + 1, -1)
+            pos_scaled = self.pos * length_scale
+            pos_diff = pos_scaled[:, None, :] - pos_scaled[None, :, :]
+            squared_diff = self.xp.sum(pos_diff ** 2, axis=2)
+            self.K = self.xp.power(squared_diff + 1, -1)
         elif self.kernel_type == "dummy":
             logger.info("using Identity as the kernel matrix")
-            self.K = np.identity(self.n)
+            self.K = self.xp.eye(self.n)
         else:
             logger.error("other kernel type not implemented yet!")
             raise NotImplemented
         logger.debug("performing eigenvalue decomposition on kernel matrix!")
-        self.lbds, self.U = eigh(self.K)
+        # Use CuPy/NumPy eigenvalue decomposition
+        if self.use_gpu and cp_linalg is not None:
+            self.lbds, self.U = cp_linalg.eigh(self.K)
+        else:
+            self.lbds, self.U = eigh(self.K.get() if self.use_gpu else self.K)
+            if self.use_gpu:
+                self.lbds = cp.asarray(self.lbds)
+                self.U = cp.asarray(self.U)
 
         if check_numeric_stability:
             logger.debug("calculating kernel inverse")
-            self.K_inv = np.linalg.inv(self.K)
-            K_det, K_num, recon_det = np.linalg.det(self.K), np.sum(self.K - np.identity(self.n)), np.linalg.det(self.K @ self.K_inv)
+            self.K_inv = self.xp.linalg.inv(self.K)
+            K_det = self.xp.linalg.det(self.K)
+            K_num = self.xp.sum(self.K - self.xp.eye(self.n))
+            recon_det = self.xp.linalg.det(self.K @ self.K_inv)
             if recon_det < -1 or recon_det > 1000:
                 logger.warning("kernel matrix status: det={:.4f}, K_num={:.4f}, det(KK^-1)={:.4f}\n"
                                "numerical instability is expected, please try smaller gamma or length_scale".format(
                     K_det, K_num, recon_det))
             else:
                 logger.debug("kernel matrix status: det={:.4f}, K_num={:.4f}, det(KK^-1)={:.4f}".format(
-                    np.linalg.det(self.K), np.sum(self.K - np.identity(self.n)), np.linalg.det(self.K @ self.K_inv)
-                ))
+                    K_det, K_num, recon_det))
 
     def estimateParams(self, iterations_gamma=10, iterations_sigma_W=20, tol_gamma=1e-2, tol_sigma=1e-5,
                        estimate_gamma=False, gamma_init=1, gamma_bound=(0.1, 5),
@@ -136,30 +191,36 @@ class SMOPCA:
             self.sigma_hat_sqr_list = []
             for modality in range(self.modality_num):
                 Y = self.Y_list[modality]
-                tr_YY_T = np.trace(Y @ Y.T)
+                tr_YY_T = self.xp.trace(Y @ Y.T)
                 sigma_sqr = sigma_init_list[modality]
                 sigma_hat_sqr = None
                 W_hat = None
                 logger.info(f"estimating sigma{modality + 1}")
                 for iter2 in range(iterations_sigma_W):
                     # estimate W_k
-                    D1 = np.diag(self.lbds * sigma_sqr / (self.lbds + sigma_sqr))
+                    D1 = self.xp.diag(self.lbds * sigma_sqr / (self.lbds + sigma_sqr))
                     P1 = Y @ self.U
                     G = P1 @ D1 @ P1.T
-                    vals, vec = eigh(G)
+                    if self.use_gpu and cp_linalg is not None:
+                        vals, vec = cp_linalg.eigh(G)
+                    else:
+                        vals, vec = eigh(G.get() if self.use_gpu else G)
+                        if self.use_gpu:
+                            vals = cp.asarray(vals)
+                            vec = cp.asarray(vec)
                     W_hat = vec[:, -self.d:]  # eigenvectors w.r.t. d largest eigenvalues
                     assert W_hat.shape == (self.m_list[modality], self.d)
 
                     # estimate sigma_k
                     def jac_sigma_sqr(_sigma_sqr):  # derivative of -log likelihood w.r.t. sigma_k^2
                         part1 = self.m_list[modality] * self.n / _sigma_sqr
-                        part2 = -np.sum(self.lbds / (self.lbds + _sigma_sqr)) * self.d / _sigma_sqr
-                        D2 = np.diag((self.lbds * (2 * _sigma_sqr + self.lbds)) / (self.lbds + _sigma_sqr) ** 2)
+                        part2 = -self.xp.sum(self.lbds / (self.lbds + _sigma_sqr)) * self.d / _sigma_sqr
+                        D2 = self.xp.diag((self.lbds * (2 * _sigma_sqr + self.lbds)) / (self.lbds + _sigma_sqr) ** 2)
                         P2 = W_hat.T @ Y @ self.U
-                        part3 = (np.trace(P2 @ D2 @ P2.T) - tr_YY_T) / _sigma_sqr ** 2
+                        part3 = (self.xp.trace(P2 @ D2 @ P2.T) - tr_YY_T) / _sigma_sqr ** 2
                         jac = part1 + part2 + part3
                         logger.debug("jac{}({:.5f}) = {:.5f}".format(modality + 1, _sigma_sqr, jac))
-                        return jac
+                        return float(jac)  # Convert to Python scalar for scipy.optimize
 
                     # estimate a bound for tighter searching range
                     if bound_list[modality] is None:
@@ -251,8 +312,17 @@ class SMOPCA:
 
             def f_gamma(g):
                 matern_obj = Matern(length_scale=g, nu=self.nu)
-                K = matern_obj(X=self.pos, Y=self.pos)
-                lbds, U = eigh(K)
+                # Convert to CPU for sklearn, then back to GPU
+                pos_cpu = self.pos.get() if self.use_gpu else self.pos
+                K_cpu = matern_obj(X=pos_cpu, Y=pos_cpu)
+                K = cp.asarray(K_cpu, dtype=cp.float32) if self.use_gpu else K_cpu
+                if self.use_gpu and cp_linalg is not None:
+                    lbds, U = cp_linalg.eigh(K)
+                else:
+                    lbds, U = eigh(K.get() if self.use_gpu else K)
+                    if self.use_gpu:
+                        lbds = cp.asarray(lbds)
+                        U = cp.asarray(U)
                 val = 0
                 for k in range(self.modality_num):
                     if k == 0:
@@ -261,12 +331,12 @@ class SMOPCA:
                     sigma_k_sqr = self.sigma_hat_sqr_list[k]
                     W_k = self.W_hat_list[k]
                     Y_k = self.Y_list[k]
-                    part1 = self.d * np.sum(np.log(1 + lbds / sigma_k_sqr))
-                    D = np.diag(lbds / (lbds + sigma_k_sqr))
-                    part2 = -np.trace(W_k.T @ Y_k @ U @ D @ U.T @ Y_k.T @ W_k) / sigma_k_sqr
+                    part1 = self.d * self.xp.sum(self.xp.log(1 + lbds / sigma_k_sqr))
+                    D = self.xp.diag(lbds / (lbds + sigma_k_sqr))
+                    part2 = -self.xp.trace(W_k.T @ Y_k @ U @ D @ U.T @ Y_k.T @ W_k) / sigma_k_sqr
                     val += alpha_k * (part1 + part2)
                 logger.debug("f_gamma({:.5f}) = {:.5f}".format(g, val))
-                return val
+                return float(val)  # Convert to Python scalar for scipy.optimize
 
             ret = scipy.optimize.minimize_scalar(f_gamma, method="Bounded", bounds=gamma_bound, tol=gamma_tol)
             gamma_hat = ret['x']
@@ -293,12 +363,37 @@ class SMOPCA:
         :return: posterior mean of shape (#cells, zdim)
         """
         logger.info("calculating posterior")
-        self.sigma_hat_sqr_list = np.array(self.sigma_hat_sqr_list)
-        c = np.sum(self.alpha_list / self.sigma_hat_sqr_list)
-        D = np.diag(self.lbds / (1 + self.lbds * c))
+        # Convert sigma_hat_sqr_list to array if it's not already
+        if not isinstance(self.sigma_hat_sqr_list, self.xp.ndarray):
+            self.sigma_hat_sqr_list = self.xp.array(self.sigma_hat_sqr_list)
+        
+        c = self.xp.sum(self.alpha_list / self.sigma_hat_sqr_list)
+        D = self.xp.diag(self.lbds / (1 + self.lbds * c))
         A_inv = self.U @ D @ self.U.T
-        B = 0
+        B = self.xp.zeros((self.n, self.d))
         for modality in range(self.modality_num):
             B += ((self.alpha_list[modality] / self.sigma_hat_sqr_list[modality]) * self.M_list[modality] @ self.Y_list[modality].T @ self.W_hat_list[modality])
         self.Z = (A_inv @ B).T
         return self.Z.T
+
+    def get_results_numpy(self):
+        """
+        Convert all results back to NumPy arrays for compatibility with existing code
+        """
+        results = {}
+        if self.Z is not None:
+            results['Z'] = self.Z.get() if self.use_gpu else self.Z
+        if self.U is not None:
+            results['U'] = self.U.get() if self.use_gpu else self.U
+        if self.lbds is not None:
+            results['lbds'] = self.lbds.get() if self.use_gpu else self.lbds
+        if self.K is not None:
+            results['K'] = self.K.get() if self.use_gpu else self.K
+        if hasattr(self, 'W_hat_list') and self.W_hat_list:
+            results['W_hat_list'] = [W.get() if self.use_gpu else W for W in self.W_hat_list]
+        if hasattr(self, 'sigma_hat_sqr_list') and self.sigma_hat_sqr_list is not None:
+            if isinstance(self.sigma_hat_sqr_list, self.xp.ndarray):
+                results['sigma_hat_sqr_list'] = self.sigma_hat_sqr_list.get() if self.use_gpu else self.sigma_hat_sqr_list
+            else:
+                results['sigma_hat_sqr_list'] = np.array(self.sigma_hat_sqr_list)
+        return results

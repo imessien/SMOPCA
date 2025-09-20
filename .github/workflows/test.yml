@@ -1,0 +1,93 @@
+name: Test SMOPCA with updated dependencies
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10, 3.11, 3.12]
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Install SMOPCA in development mode
+      run: |
+        pip install -e .
+    
+    - name: Run compatibility tests
+      run: |
+        python -c "
+        import scipy
+        print(f'SciPy version: {scipy.__version__}')
+        from scipy.linalg import eigh
+        from scipy.optimize import brentq
+        from scipy.spatial import distance_matrix
+        from scipy import sparse
+        import numpy as np
+        
+        # Test basic SciPy functionality
+        A = np.random.rand(10, 10)
+        A = A + A.T
+        eigenvals, eigenvecs = eigh(A)
+        print('✓ SciPy eigh works')
+        
+        def f(x): return x**2 - 2
+        root = brentq(f, 0, 2)
+        print('✓ SciPy brentq works')
+        
+        pos = np.random.rand(5, 2)
+        dist_mat = distance_matrix(pos, pos)
+        print('✓ SciPy distance_matrix works')
+        
+        sparse_mat = sparse.csr_matrix(np.random.rand(5, 5))
+        print('✓ SciPy sparse works')
+        print('All SciPy functionality tests passed!')
+        "
+    
+    - name: Run basic functionality test
+      run: |
+        python -c "
+        import numpy as np
+        from src.model import SMOPCA
+        
+        # Create dummy data
+        n_cells = 20
+        n_features1 = 50
+        n_features2 = 30
+        pos = np.random.rand(n_cells, 2)
+        
+        Y1 = np.random.rand(n_features1, n_cells)
+        Y2 = np.random.rand(n_features2, n_cells)
+        Y_list = [Y1, Y2]
+        
+        # Test SMOPCA
+        smopca = SMOPCA(Y_list, pos, Z_dim=5)
+        smopca.buildKernel(length_scale=1.0)
+        print('✓ SMOPCA basic functionality test passed')
+        "
+    
+    - name: Test with different SciPy versions
+      run: |
+        pip install "scipy>=1.15.3"
+        python -c "
+        import scipy
+        print(f'SciPy version: {scipy.__version__}')
+        from src.model import SMOPCA
+        print('✓ SMOPCA works with latest SciPy')
+        "

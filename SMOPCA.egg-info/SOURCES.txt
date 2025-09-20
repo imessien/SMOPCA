@@ -1,0 +1,11 @@
+LICENSE
+README.md
+setup.py
+SMOPCA.egg-info/PKG-INFO
+SMOPCA.egg-info/SOURCES.txt
+SMOPCA.egg-info/dependency_links.txt
+SMOPCA.egg-info/requires.txt
+SMOPCA.egg-info/top_level.txt
+src/__init__.py
+src/model.py
+src/utils.py

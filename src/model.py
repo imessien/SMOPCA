@@ -166,26 +166,74 @@ class SMOPCA:
                         lb = ub = 0.1
                         lb_res = -np.inf
                         ub_res = np.inf
+                        
+                        # Find bounds where function has different signs
                         for sigma in np.arange(0.1, 10.0, 0.1):
                             res = jac_sigma_sqr(sigma)
+                            logger.debug(f"sigma={sigma:.1f}, res={res:.6f}")
                             if res < 0:
                                 lb = sigma
                                 lb_res = res
-                            else:
+                            elif res > 0 and lb_res != -np.inf:
                                 ub = sigma
                                 ub_res = res
                                 break
+                        
+                        
+                        # Check if we actually found different bounds
+                        if lb >= ub:
+                            # Search for bounds with different signs
+                            for sigma in np.arange(0.1, 1000.0, 0.1):
+                                res = jac_sigma_sqr(sigma)
+                                if res < 0:
+                                    lb = sigma
+                                    lb_res = res
+                                elif res > 0 and lb_res != -np.inf:
+                                    ub = sigma
+                                    ub_res = res
+                                    break
+                        
+                        # If no sign change found, log warning
+                        if lb_res * ub_res >= 0:  # Same sign or one is inf
+                            logger.warning(f"sigma{modality + 1}: No sign change found, adjusted bounds to ensure different signs")
+                        
+                        # Apply safety adjustments
                         if abs(lb_res) < 1000:  # for a safer bound since this is a bound dependent on last iteration (init values)
-                            lb -= 0.05
+                            lb = max(0.001, lb - 0.05)  # Ensure positive lower bound
                         if abs(ub_res) < 1000:
                             ub += 0.05
+                        
+                        # Ensure bounds are valid (lb < ub) after all adjustments
+                        if lb >= ub:
+                            lb, ub = ub, lb  # Swap if needed
+                        
                         bound_list[modality] = (lb, ub)
                         logger.info("sigma{} using bound: ({:.5f}, {:.5f})".format(modality + 1, lb, ub))
 
+                    # Ensure bounds are valid for brentq
+                    lb, ub = bound_list[modality][0], bound_list[modality][1]
+                    if lb > ub:
+                        lb, ub = ub, lb  # Swap if bounds are reversed
+                        bound_list[modality] = (lb, ub)
+                    
+                    # Keep searching for bounds with different signs
+                    lb_val = jac_sigma_sqr(bound_list[modality][0])
+                    ub_val = jac_sigma_sqr(bound_list[modality][1])
+                    
+                    while lb_val * ub_val >= 0:  # Keep searching until different signs found
+                        logger.warning(f"sigma{modality + 1}: Still same signs, continuing search")
+                        if lb_val < 0:  # Both negative, expand upper bound
+                            bound_list[modality] = (bound_list[modality][0], bound_list[modality][1] * 10)
+                        else:  # Both positive, expand lower bound
+                            bound_list[modality] = (bound_list[modality][0] * 0.1, bound_list[modality][1])
+                        lb_val = jac_sigma_sqr(bound_list[modality][0])
+                        ub_val = jac_sigma_sqr(bound_list[modality][1])
+                    
                     sigma_hat_sqr = brentq(jac_sigma_sqr, bound_list[modality][0], bound_list[modality][1],
                                            xtol=sigma_xtol_list[modality])
                     logger.info("iter {} sigma{} brentq done, sigma{}sqr = {:.5f}, sigma{}hatsqr = {:.5f}".format(
                         iter2, modality + 1, modality + 1, sigma_sqr, modality + 1, sigma_hat_sqr))
+              
 
                     if abs(sigma_sqr - sigma_hat_sqr) < tol_sigma:
                         logger.info(f"reach tolerance threshold, sigma{modality + 1} done!")

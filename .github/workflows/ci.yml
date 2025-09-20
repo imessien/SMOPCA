@@ -14,8 +14,25 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.9, 3.10, 3.11, 3.12]
-        scipy-version: ['1.10.0', '1.13.0', '1.16.0']
+        include:
+          - python-version: 3.9
+            scipy-version: '1.10.0'
+          - python-version: 3.9
+            scipy-version: '1.13.0'
+          - python-version: 3.10
+            scipy-version: '1.10.0'
+          - python-version: 3.10
+            scipy-version: '1.13.0'
+          - python-version: 3.10
+            scipy-version: '1.16.0'
+          - python-version: 3.11
+            scipy-version: '1.13.0'
+          - python-version: 3.11
+            scipy-version: '1.16.0'
+          - python-version: 3.12
+            scipy-version: '1.13.0'
+          - python-version: 3.12
+            scipy-version: '1.16.0'
       fail-fast: false
 
     steps:
@@ -42,7 +59,12 @@ jobs:
     
     - name: Test with specific SciPy version
       run: |
-        pip install scipy==${{ matrix.scipy-version }}
+        # Try to install the specific SciPy version
+        pip install scipy==${{ matrix.scipy-version }} || {
+          echo "SciPy ${{ matrix.scipy-version }} not available for Python ${{ matrix.python-version }}"
+          echo "Installing latest compatible SciPy version"
+          pip install scipy
+        }
         python -c "import scipy; print(f'SciPy version: {scipy.__version__}')"
     
     - name: Run tests

@@ -5,6 +5,11 @@ import scanpy as sc
 from sklearn import metrics
 from matplotlib.patches import Ellipse
 from scipy import sparse
+import pandas as pd
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def preprocess_adata(adata_list, filter_gene=25, filter_cell=50, hvg=2000):
@@ -17,7 +22,6 @@ def preprocess_adata(adata_list, filter_gene=25, filter_cell=50, hvg=2000):
     sc.pp.log1p(adata_rna)
     sc.pp.scale(adata_rna)
     adata1 = adata_rna[:, adata_rna.var['highly_variable']]
-    adata2 = clr_normalize_each_cell(adata2)
     sc.pp.scale(adata2)
     pos = np.array(adata1.obsm['spatial'])
     X1, X2 = adata1.X.toarray(), adata2.X
@@ -169,3 +173,132 @@ def plot_cluster(labels: np.ndarray, pos: np.ndarray, colorList: list, pointSize
     plt.gca().set_aspect(1)
     if show:
         plt.show()
+
+
+def load_imzml_data(imzml_file, ibd_file=None, mz_range=(100, 1000), intensity_threshold=0):
+    """
+    Load imzML data and convert to AnnData format compatible with SMOPCA.
+    
+    Args:
+        imzml_file: Path to .imzML file
+        ibd_file: Path to .ibd file (optional, auto-detected if not provided)
+        mz_range: Tuple of (min_mz, max_mz) to filter m/z values
+        intensity_threshold: Minimum intensity threshold
+        
+    Returns:
+        AnnData object with spatial coordinates and intensity matrix
+    """
+    try:
+        import pyimzml
+    except ImportError:
+        raise ImportError("pyimzml is required for imzML support. Install with: uv sync")
+    
+    # Check for minimum pyimzml version for backwards compatibility
+    try:
+        import pyimzml
+        if hasattr(pyimzml, '__version__'):
+            version = pyimzml.__version__
+            major, minor = map(int, version.split('.')[:2])
+            if major < 1 or (major == 1 and minor < 5):
+                logger.warning(f"pyimzml version {version} may not be fully compatible. Recommended: >=1.5.0")
+    except Exception:
+        pass  # Continue if version check fails
+    
+    # Auto-detect ibd file if not provided
+    if ibd_file is None:
+        ibd_file = imzml_file.replace('.imzML', '.ibd')
+        if not os.path.exists(ibd_file):
+            raise FileNotFoundError(f"Could not find .ibd file: {ibd_file}")
+    
+    # Load imzML data
+    reader = pyimzml.ImzMLReader(imzml_file)
+    
+    # Extract spatial coordinates and m/z values
+    coords = []
+    mz_values = set()
+    
+    print("Reading imzML file structure...")
+    for i, (x, y, z) in enumerate(reader.coordinates):
+        coords.append([x, y, z])
+        if i >= 100:  # Sample first 100 pixels to get m/z range
+            break
+    
+    # Get all m/z values
+    print("Extracting m/z values...")
+    for i, (x, y, z) in enumerate(reader.coordinates):
+        mzs, intensities = reader.getspectrum(i)
+        for mz in mzs:
+            if mz_range[0] <= mz <= mz_range[1]:
+                mz_values.add(mz)
+        if i % 1000 == 0:
+            print(f"Processed {i} pixels...")
+    
+    mz_values = sorted(list(mz_values))
+    print(f"Found {len(mz_values)} m/z values in range {mz_range}")
+    
+    # Create intensity matrix
+    print("Building intensity matrix...")
+    n_pixels = len(reader.coordinates)
+    intensity_matrix = np.zeros((n_pixels, len(mz_values)))
+    
+    for i, (x, y, z) in enumerate(reader.coordinates):
+        mzs, intensities = reader.getspectrum(i)
+        for mz, intensity in zip(mzs, intensities):
+            if intensity >= intensity_threshold and mz_range[0] <= mz <= mz_range[1]:
+                mz_idx = mz_values.index(mz)
+                intensity_matrix[i, mz_idx] = intensity
+        if i % 1000 == 0:
+            print(f"Processed {i}/{n_pixels} pixels...")
+    
+    # Create AnnData object
+    coords = np.array(coords)
+    obs_df = pd.DataFrame({
+        'x': coords[:, 0],
+        'y': coords[:, 1],
+        'z': coords[:, 2]
+    })
+    
+    var_df = pd.DataFrame({
+        'mz': mz_values,
+        'mz_str': [f"mz_{mz:.2f}" for mz in mz_values]
+    })
+    
+    adata = sc.AnnData(X=intensity_matrix, obs=obs_df, var=var_df)
+    adata.obsm['spatial'] = coords[:, :2]  # Use only x, y for 2D spatial analysis
+    
+    print(f"Created AnnData object with {adata.n_obs} pixels and {adata.n_vars} m/z values")
+    return adata
+
+
+def preprocess_imzml_data(adata, min_pixels=10, min_intensity=1, log_transform=True):
+    """
+    Preprocess imzML data for SMOPCA analysis.
+    
+    Args:
+        adata: AnnData object from load_imzml_data()
+        min_pixels: Minimum number of pixels where m/z should be detected
+        min_intensity: Minimum total intensity threshold
+        log_transform: Whether to apply log transformation
+        
+    Returns:
+        Preprocessed AnnData object
+    """
+    print("Preprocessing imzML data...")
+    
+    # Filter m/z values (features)
+    sc.pp.filter_genes(adata, min_cells=min_pixels)
+    
+    # Filter pixels with very low total intensity
+    adata.obs['total_intensity'] = np.sum(adata.X, axis=1)
+    sc.pp.filter_cells(adata, min_genes=1)
+    adata = adata[adata.obs['total_intensity'] >= min_intensity].copy()
+    
+    # Log transformation
+    if log_transform:
+        adata.X = np.log1p(adata.X)
+    
+    # Normalize by total intensity per pixel
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    
+    print(f"After preprocessing: {adata.n_obs} pixels, {adata.n_vars} m/z values")
+    return adata

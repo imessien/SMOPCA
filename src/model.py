@@ -9,16 +9,7 @@ from scipy.optimize import brentq
 from scipy.spatial import distance_matrix
 
 # Import CuPy SciPy modules for GPU acceleration
-try:
-    import cupyx.scipy.linalg as cp_linalg
-    import cupyx.scipy.spatial as cp_spatial
-    import cupyx.scipy.optimize as cp_optimize
-    CUPY_AVAILABLE = True
-except ImportError:
-    CUPY_AVAILABLE = False
-    cp_linalg = None
-    cp_spatial = None
-    cp_optimize = None
+import cupyx.scipy.spatial as cp_spatial
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +29,12 @@ class SMOPCA:
         """
         assert all(Y.shape[1] == Y_list[0].shape[1] for Y in Y_list)
         
-        # GPU detection and array backend selection
-        self.use_gpu = use_gpu and CUPY_AVAILABLE and cp.cuda.is_available()
+        # GPU detection and array backend selection with backwards compatibility
+        try:
+            self.use_gpu = use_gpu and cp.cuda.is_available()
+        except Exception as e:
+            logger.warning(f"GPU detection failed: {e}. Falling back to CPU.")
+            self.use_gpu = False
         self.xp = cp if self.use_gpu else np  # Use CuPy or NumPy based on availability
         
         # Convert input data to appropriate arrays
@@ -113,9 +108,15 @@ class SMOPCA:
                 self.K = cp.asarray(K_cpu, dtype=cp.float32) if self.use_gpu else K_cpu
             elif method == "scipy":
                 # Use CuPy/NumPy for distance calculation
-                pos_diff = self.pos[:, None, :] - self.pos[None, :, :]  # Broadcasting
-                squared_dist = self.xp.sum(pos_diff ** 2, axis=2)
-                self.K = self.xp.exp(-squared_dist / length_scale)
+                if self.use_gpu:
+                    # Use CuPy spatial distance_matrix for GPU acceleration
+                    dist_matrix = cp_spatial.distance_matrix(self.pos, self.pos)
+                    self.K = cp.exp(-dist_matrix / length_scale)
+                else:
+                    # Fallback to manual calculation or scipy
+                    pos_diff = self.pos[:, None, :] - self.pos[None, :, :]
+                    squared_dist = self.xp.sum(pos_diff ** 2, axis=2)
+                    self.K = self.xp.exp(-squared_dist / length_scale)
         elif self.kernel_type == 'matern':
             logger.info(f"calculating {self.kernel_type} kernel, nu = {self.nu}, length_scale = {length_scale}")
             # Convert to CPU for sklearn, then back to GPU
@@ -126,14 +127,28 @@ class SMOPCA:
         elif self.kernel_type == 'cauchy':
             logger.info(f"calculating {self.kernel_type} kernel, sigma = {length_scale}")
             # Use CuPy/NumPy for distance calculation
-            pos_diff = self.pos[:, None, :] - self.pos[None, :, :]
-            squared_diff = self.xp.sum(pos_diff ** 2, axis=2)
-            self.K = 1 / (1 + squared_diff / length_scale ** 2)
+            if self.use_gpu:
+                # Use CuPy spatial distance_matrix for GPU acceleration
+                dist_matrix = cp_spatial.distance_matrix(self.pos, self.pos)
+                squared_diff = dist_matrix ** 2
+                self.K = 1 / (1 + squared_diff / length_scale ** 2)
+            else:
+                # Fallback to manual calculation
+                pos_diff = self.pos[:, None, :] - self.pos[None, :, :]
+                squared_diff = self.xp.sum(pos_diff ** 2, axis=2)
+                self.K = 1 / (1 + squared_diff / length_scale ** 2)
         elif self.kernel_type == "tsne":
             pos_scaled = self.pos * length_scale
-            pos_diff = pos_scaled[:, None, :] - pos_scaled[None, :, :]
-            squared_diff = self.xp.sum(pos_diff ** 2, axis=2)
-            self.K = self.xp.power(squared_diff + 1, -1)
+            if self.use_gpu:
+                # Use CuPy spatial distance_matrix for GPU acceleration
+                dist_matrix = cp_spatial.distance_matrix(pos_scaled, pos_scaled)
+                squared_diff = dist_matrix ** 2
+                self.K = self.xp.power(squared_diff + 1, -1)
+            else:
+                # Fallback to manual calculation
+                pos_diff = pos_scaled[:, None, :] - pos_scaled[None, :, :]
+                squared_diff = self.xp.sum(pos_diff ** 2, axis=2)
+                self.K = self.xp.power(squared_diff + 1, -1)
         elif self.kernel_type == "dummy":
             logger.info("using Identity as the kernel matrix")
             self.K = self.xp.eye(self.n)
@@ -142,13 +157,10 @@ class SMOPCA:
             raise NotImplemented
         logger.debug("performing eigenvalue decomposition on kernel matrix!")
         # Use CuPy/NumPy eigenvalue decomposition
-        if self.use_gpu and cp_linalg is not None:
-            self.lbds, self.U = cp_linalg.eigh(self.K)
+        if self.use_gpu:
+            self.lbds, self.U = cp.linalg.eigh(self.K)
         else:
-            self.lbds, self.U = eigh(self.K.get() if self.use_gpu else self.K)
-            if self.use_gpu:
-                self.lbds = cp.asarray(self.lbds)
-                self.U = cp.asarray(self.U)
+            self.lbds, self.U = eigh(self.K)
 
         if check_numeric_stability:
             logger.debug("calculating kernel inverse")
@@ -201,13 +213,10 @@ class SMOPCA:
                     D1 = self.xp.diag(self.lbds * sigma_sqr / (self.lbds + sigma_sqr))
                     P1 = Y @ self.U
                     G = P1 @ D1 @ P1.T
-                    if self.use_gpu and cp_linalg is not None:
-                        vals, vec = cp_linalg.eigh(G)
+                    if self.use_gpu:
+                        vals, vec = cp.linalg.eigh(G)
                     else:
-                        vals, vec = eigh(G.get() if self.use_gpu else G)
-                        if self.use_gpu:
-                            vals = cp.asarray(vals)
-                            vec = cp.asarray(vec)
+                        vals, vec = eigh(G)
                     W_hat = vec[:, -self.d:]  # eigenvectors w.r.t. d largest eigenvalues
                     assert W_hat.shape == (self.m_list[modality], self.d)
 
@@ -316,13 +325,10 @@ class SMOPCA:
                 pos_cpu = self.pos.get() if self.use_gpu else self.pos
                 K_cpu = matern_obj(X=pos_cpu, Y=pos_cpu)
                 K = cp.asarray(K_cpu, dtype=cp.float32) if self.use_gpu else K_cpu
-                if self.use_gpu and cp_linalg is not None:
-                    lbds, U = cp_linalg.eigh(K)
+                if self.use_gpu:
+                    lbds, U = cp.linalg.eigh(K)
                 else:
-                    lbds, U = eigh(K.get() if self.use_gpu else K)
-                    if self.use_gpu:
-                        lbds = cp.asarray(lbds)
-                        U = cp.asarray(U)
+                    lbds, U = eigh(K)
                 val = 0
                 for k in range(self.modality_num):
                     if k == 0:

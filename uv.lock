@@ -1485,7 +1485,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },
-    { name = "cupy-cuda11x" },
     { name = "h5py" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -1504,6 +1503,9 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
 ]
+gpu = [
+    { name = "cupy-cuda11x" },
+]
 gpu-cuda12 = [
     { name = "cupy-cuda12x" },
     { name = "cuvs-cu12" },
@@ -1512,26 +1514,26 @@ gpu-cuda12 = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anndata", specifier = ">=0.8.0,<1.0.0" },
+    { name = "anndata", specifier = ">=0.8.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
-    { name = "cupy-cuda11x", specifier = ">=11.0.0,<14.0.0" },
-    { name = "cupy-cuda12x", marker = "extra == 'gpu-cuda12'", specifier = ">=12.0.0,<14.0.0" },
-    { name = "cuvs-cu12", marker = "extra == 'gpu-cuda12'", specifier = ">=24.12.0,<26.0.0" },
+    { name = "cupy-cuda11x", marker = "extra == 'gpu'", specifier = ">=11.0.0" },
+    { name = "cupy-cuda12x", marker = "extra == 'gpu-cuda12'", specifier = ">=12.0.0" },
+    { name = "cuvs-cu12", marker = "extra == 'gpu-cuda12'", specifier = ">=24.12.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "h5py", specifier = ">=3.8.0,<4.0.0" },
-    { name = "matplotlib", specifier = ">=3.6.0,<4.0.0" },
+    { name = "h5py", specifier = ">=3.8.0" },
+    { name = "matplotlib", specifier = ">=3.6.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=0.950" },
-    { name = "numpy", specifier = ">=1.23.0,<2.0.0" },
-    { name = "pandas", specifier = ">=1.5.0,<3.0.0" },
-    { name = "pyimzml", specifier = ">=1.5.0,<2.0.0" },
-    { name = "pylibraft-cu12", marker = "extra == 'gpu-cuda12'", specifier = ">=24.12.0,<26.0.0" },
+    { name = "numpy", specifier = ">=1.23.0" },
+    { name = "pandas", specifier = ">=1.5.0" },
+    { name = "pyimzml", specifier = ">=1.5.0" },
+    { name = "pylibraft-cu12", marker = "extra == 'gpu-cuda12'", specifier = ">=24.12.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "scanpy", specifier = ">=1.9.0,<2.0.0" },
-    { name = "scikit-learn", specifier = ">=1.2.0,<2.0.0" },
-    { name = "scipy", specifier = ">=1.10.0,<2.0.0" },
-    { name = "seaborn", specifier = ">=0.11.0,<1.0.0" },
+    { name = "scanpy", specifier = ">=1.9.0" },
+    { name = "scikit-learn", specifier = ">=1.2.0" },
+    { name = "scipy", specifier = ">=1.10.0" },
+    { name = "seaborn", specifier = ">=0.11.0" },
 ]
-provides-extras = ["gpu-cuda12", "dev"]
+provides-extras = ["gpu", "gpu-cuda12", "dev"]
 
 [[package]]
 name = "statsmodels"

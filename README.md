@@ -8,12 +8,8 @@ Spatial Multi-Omics PCA (SMOPCA) is a novel dimension reduction method to integr
 ## Quick Installation
 
 ```bash
-# Install with GPU acceleration (default)
+# Install with automatic GPU selection
 uv add git+https://github.com/imessien/SMOPCA.git
-
-# Install with CUDA 12 support
-uv add git+https://github.com/imessien/SMOPCA.git[gpu-cuda12]
-```
 
 ## Quick Start
 

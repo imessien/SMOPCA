@@ -8,24 +8,26 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "anndata>=0.8.0,<1.0.0",
-    "h5py>=3.8.0,<4.0.0",
-    "matplotlib>=3.6.0,<4.0.0",
-    "numpy>=1.23.0,<2.0.0",
-    "pandas>=1.5.0,<3.0.0",
-    "pyimzml>=1.5.0,<2.0.0",
-    "scanpy>=1.9.0,<2.0.0",
-    "scikit-learn>=1.2.0,<2.0.0",
-    "scipy>=1.10.0,<2.0.0",
-    "seaborn>=0.11.0,<1.0.0",
-    "cupy-cuda11x>=11.0.0,<14.0.0",
+    "anndata>=0.8.0",
+    "h5py>=3.8.0",
+    "matplotlib>=3.6.0",
+    "numpy>=1.23.0",
+    "pandas>=1.5.0",
+    "pyimzml>=1.5.0",
+    "scanpy>=1.9.0",
+    "scikit-learn>=1.2.0",
+    "scipy>=1.10.0",
+    "seaborn>=0.11.0",
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "cupy-cuda11x>=11.0.0",
+]
 gpu-cuda12 = [
-    "cupy-cuda12x>=12.0.0,<14.0.0",
-    "pylibraft-cu12>=24.12.0,<26.0.0",
-    "cuvs-cu12>=24.12.0,<26.0.0",
+    "cupy-cuda12x>=12.0.0",
+    "pylibraft-cu12>=24.12.0",
+    "cuvs-cu12>=24.12.0",
 ]
 dev = [
     "pytest>=7.0.0",
@@ -42,4 +44,4 @@ build-backend = "hatchling.build"
 packages = ["src"]
 
 [tool.uv]
-# Note: GPU support is now included by default
+# Automatic GPU selection - UV handles GPU environment detection
